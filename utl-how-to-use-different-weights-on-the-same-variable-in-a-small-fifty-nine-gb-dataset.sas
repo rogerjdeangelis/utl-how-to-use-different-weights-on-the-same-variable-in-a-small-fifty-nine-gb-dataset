@@ -2,7 +2,7 @@
 
 How to use different weights on the same variable in a small fifty nine gb dataset
 
-Using SPDE and Mark's code I was able to reduce the time to 68 seconds
+Using SPDE and Mark's code I was able to reduce the time to 68 seconds (20 simultaneous tasks)
 
   Solutions
 
@@ -12,11 +12,17 @@ Using SPDE and Mark's code I was able to reduce the time to 68 seconds
           mkeintz@outlook.com
           mkeintz@wharton.upenn.edu
        3. Mark's datastep with SPDE 1:08 (68 seconds)
+       4, HASH (single threaded)  Probably the fastest for unsorted data, I have enough ram 128gb.
+          (I think there is an issue with the base SAS hash because it is single threaded)
+          Took almost 7 minutes on the sorted data.
+          I woud use the multithreaded DS2 SAS hash if SAS had a tool to convert base
+          SAS language to a DS2 language. Don't have time for other sas languages like DS2 and FCMP.
+       5. Parallel Hash 20 tasks
+          Not much better when when running 20 parallel tasks
 
 FYI if a substute sum for mean in SQL and use SPDE it runs in 64 seconds.
 However, if I use the mean function it takes over 7 minutes.
 Might be able to use SPDE if I use count and sum and have a second sql to get the mean.
-
 
 githup
 https://tinyurl.com/yw7fnwfx
@@ -259,14 +265,12 @@ NOTE: The data set WORK.WANT has 20 observations and 7 variables.
 NOTE: DATA statement used (Total process time):
       real time           3:24.51
 */
-
-
-/*   _       _            _                       _     _
-  __| | __ _| |_ __ _ ___| |_ ___ _ __    ___  __| | __| | ___
- / _` |/ _` | __/ _` / __| __/ _ \ `_ \  / __|/ _` |/ _` |/ _ \
-| (_| | (_| | || (_| \__ \ ||  __/ |_) | \__ \ (_| | (_| |  __/
- \__,_|\__,_|\__\__,_|___/\__\___| .__/  |___/\__,_|\__,_|\___|
-                                 |_|
+/*   _       _                                           _
+  __| | __ _| |_ __ _ ___ _ __ ___ _ __    ___ _ __   __| | ___
+ / _` |/ _` | __/ _` / __| `__/ _ \ `_ \  / __| `_ \ / _` |/ _ \
+| (_| | (_| | || (_| \__ \ | |  __/ |_) | \__ \ |_) | (_| |  __/
+ \__,_|\__,_|\__\__,_|___/_|  \___| .__/  |___/ .__/ \__,_|\___|
+                                  |_|         |_|
 */
 
 * create spde partitioned data;
@@ -339,18 +343,19 @@ libname spde spde
     partsize=500m access=readonly
 ;
    data mwk.&var (keep=var varwgt:);
-     set spde.have(where=(var="&var")) end=dne;
-     by var;
+
+     set spde.have (where=(var="&var")) end=dne;
      array vrw varwgt1-varwgt6;
      array wgt w1-w6;
      do over vrw;
-       vrw+val*wgt;
-     end;
+          vrw+val*wgt;
+      end;
      if dne then do;
        do over vrw;
          vrw=vrw/_n_;
        end;
        output;
+       stop;
      end;
      format varwgt:  8.5;
    run;
@@ -418,6 +423,180 @@ data want;
      mwk.t ;
 run;quit;
 
+/*   _             _        _   _                        _    _               _
+ ___(_)_ __   __ _| | ___  | |_| |__  _ __ ___  __ _  __| |  | |__   __ _ ___| |__
+/ __| | `_ \ / _` | |/ _ \ | __| `_ \| `__/ _ \/ _` |/ _` |  | `_ \ / _` / __| `_ \
+\__ \ | | | | (_| | |  __/ | |_| | | | | |  __/ (_| | (_| |  | | | | (_| \__ \ | | |
+|___/_|_| |_|\__, |_|\___|  \__|_| |_|_|  \___|\__,_|\__,_|  |_| |_|\__,_|___/_| |_|
+              |__/
+
+* SORTED INPUT;
+
+data want (keep=var varwgt:);
+
+  if 0 then set spde.have;
+  declare hash H(ordered:"A");
+  H.defineKey("var");
+  array vrw varwgt1-varwgt6;
+  array dn  denom1 -denom6;
+
+  H.defineData("var");
+  do over vrw;
+    H.defineData(vname(vrw));
+    H.defineData(vname(dn));
+  end;
+
+  H.defineDone();
+  declare hiter I("H");
+
+  array wgt w1-w6;
+
+  do until(eof);
+    set spde.have end=eof;
+
+    if H.find() then
+        call missing(of vrw[*], of dn[*]);
+
+    do over vrw;
+      vrw + val * wgt;
+      dn  + (wgt > .z < val); /* ignore missing values */
+    end;
+    H.replace();
+
+  end;
+
+  rc = i.first();
+  do while (rc = 0);
+    do over vrw;
+      vrw =vrw/dn;
+    end;
+    output;
+    rc = i.next();
+  end;
+
+  format varwgt:  8.5;
+  stop;
+run;
+
+/*
+NOTE: There were 987500000 observations read from the data set SPDE.HAVE.
+NOTE: The data set WORK.WANT has 20 observations and 7 variables.
+NOTE: DATA statement used (Total process time):
+      real time           6:50.17
+      user cpu time       6:30.67
+*/
+
+/*               _   _       _            _      _               _
+ _ __ ___  _   _| |_(_)     | |_ __ _ ___| | __ | |__   __ _ ___| |__
+| `_ ` _ \| | | | __| |_____| __/ _` / __| |/ / | `_ \ / _` / __| `_ \
+| | | | | | |_| | |_| |_____| || (_| \__ \   <  | | | | (_| \__ \ | | |
+|_| |_| |_|\__,_|\__|_|      \__\__,_|___/_|\_\ |_| |_|\__,_|___/_| |_|
+
+*/
+
+* save in autcall folder;
+filename ft15f001 "c:/oto/hshx.sas";
+parmcards4;
+%macro hshx(var);
+
+/* %let var=A;  */
+
+libname spde spde
+ ('c:\spde_c','d:\spde_d','f:\spde_f','g:\spde_g','m:\spde_m')
+    metapath =('d:\spde_d\metadata')
+    indexpath=(
+          'c:\spde_c'
+          ,'d:\spde_d'
+          ,'f:\spde_f'
+          ,'g:\spde_g'
+          ,'m:\spde_m')
+
+    datapath =(
+          'c:\spde_c'
+          ,'d:\spde_d'
+          ,'f:\spde_f'
+          ,'g:\spde_g'
+          ,'m:\spde_m')
+    partsize=500m access=readonly
+;
+
+libname mwk "m:/wrk";
+
+data mwk.&var.h (keep=var varwgt:);
+
+  if 0 then set spde.have;
+
+  declare hash H(ordered:"A");
+  H.defineData("var");
+  array vrw varwgt1-varwgt6;
+  array dn  denom1 -denom6;
+  H.defineKey("var");
+  do over vrw;
+    H.defineData(vname(vrw));
+    H.defineData(vname(dn));
+  end;
+
+  H.defineDone();
+
+  array wgt w1-w6;
+
+  do until(eof);
+    set spde.have(where=(var="&var")) end=eof;
+    by var;
+    do over vrw;
+      vrw + val * wgt;
+      dn  + (wgt > .z < val); /* ignore missing values */
+    end;
+    H.replace();
+  end;
+
+  do over vrw;
+    vrw =vrw/dn;
+  end;
+
+  output;
+
+  format varwgt:  8.5;
+  stop;
+run;
+%mend hshx;
+;;;;
+run;quit;
+
+2017
+
+
+%let _s=%sysfunc(compbl(C:\Progra~1\SASHome\SASFoundation\9.4\sas.exe -sysin c:\nul
+ -sasautos c:\oto -work d:\wrk -nosplash -rsasuser));
+
+options noxwait noxsync;
+%let tym=%sysfunc(time());
+systask kill sys1 sys2 sys3 sys4  sys5 sys6 sys7 sys8 sys9 sys10
+             sys11 sys12 sys13 sys14  sys15 sys16 sys17 sys18 sys19 sys20 ;
+systask command "&_s -termstmt %nrstr(%hshx(A);) -log d:\log\a1.log" taskname=sys1;
+systask command "&_s -termstmt %nrstr(%hshx(B);) -log d:\log\a2.log" taskname=sys2;
+systask command "&_s -termstmt %nrstr(%hshx(C);) -log d:\log\a3.log" taskname=sys3;
+systask command "&_s -termstmt %nrstr(%hshx(D);) -log d:\log\a4.log" taskname=sys4;
+systask command "&_s -termstmt %nrstr(%hshx(E);) -log d:\log\a5.log" taskname=sys5;
+systask command "&_s -termstmt %nrstr(%hshx(F);) -log d:\log\a6.log" taskname=sys6;
+systask command "&_s -termstmt %nrstr(%hshx(G);) -log d:\log\a7.log" taskname=sys7;
+systask command "&_s -termstmt %nrstr(%hshx(H);) -log d:\log\a8.log" taskname=sys8;
+systask command "&_s -termstmt %nrstr(%hshx(I);) -log d:\log\a9.log" taskname=sys9;
+systask command "&_s -termstmt %nrstr(%hshx(J);) -log d:\log\a10.log" taskname=sys10;
+systask command "&_s -termstmt %nrstr(%hshx(K);) -log d:\log\a11.log" taskname=sys11;
+systask command "&_s -termstmt %nrstr(%hshx(L);) -log d:\log\a12.log" taskname=sys12;
+systask command "&_s -termstmt %nrstr(%hshx(M);) -log d:\log\a13.log" taskname=sys13;
+systask command "&_s -termstmt %nrstr(%hshx(N);) -log d:\log\a14.log" taskname=sys14;
+systask command "&_s -termstmt %nrstr(%hshx(O);) -log d:\log\a15.log" taskname=sys15;
+systask command "&_s -termstmt %nrstr(%hshx(P);) -log d:\log\a16.log" taskname=sys16;
+systask command "&_s -termstmt %nrstr(%hshx(Q);) -log d:\log\a17.log" taskname=sys17;
+systask command "&_s -termstmt %nrstr(%hshx(R);) -log d:\log\a18.log" taskname=sys18;
+systask command "&_s -termstmt %nrstr(%hshx(S);) -log d:\log\a19.log" taskname=sys19;
+systask command "&_s -termstmt %nrstr(%hshx(T);) -log d:\log\a20.log" taskname=sys20;
+waitfor sys1 sys2 sys3 sys4  sys5 sys6 sys7 sys8 sys9 sys10
+        sys11 sys12 sys13 sys14  sys15 sys16 sys17 sys18 sys19 sys20 ;
+%let secs=%sysevalf(%sysfunc(time()) - &tym);
+%put &=secs;
 
 
 /*              _
@@ -427,8 +606,6 @@ run;quit;
  \___|_| |_|\__,_|
 
 */
-
-
 
 
 
