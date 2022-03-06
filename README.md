@@ -1,8 +1,24 @@
 # utl-how-to-use-different-weights-on-the-same-variable-in-a-small-fifty-nine-gb-dataset
 How to use different weights on the same variable in a small fifty nine gb dataset
-    %let pgm=utl=how-to-use-different-weights-on-the-same-variable-in-a-small-fifty-nine-gb-dataset;
+    %let pgm=utl-how-to-use-different-weights-on-the-same-variable-in-a-small-fifty-nine-gb-dataset;
 
     How to use different weights on the same variable in a small fifty nine gb dataset
+
+    Using SPDE and Mark's code I was able to reduce the time to 68 seconds
+
+      Solutions
+
+           1. SQL single core 4:52 seconds
+           2. Datastep 3:24 seconds
+              Keintz, Mark
+              mkeintz@outlook.com
+              mkeintz@wharton.upenn.edu
+           3. Mark's datastep with SPDE 1:08 (68 seconds)
+
+    FYI if a substute sum for mean in SQL and use SPDE it runs in 64 seconds.
+    However, if I use the mean function it takes over 7 minutes.
+    Might be able to use SPDE if I use count and sum and have a second sql to get the mean.
+
 
     githup
     https://tinyurl.com/yw7fnwfx
@@ -47,7 +63,7 @@ How to use different weights on the same variable in a small fifty nine gb datas
     /*  987499999     T     1.18112    0.04690    0.15963    0.02975    0.02352    0.10683    0.12817                         */
     /*  987500000     T     1.15460    0.10927    0.19552    0.10695    0.08421    0.09864    0.18869                         */
     /*                                                                                                                        */
-    /* RULES                                                                                                                  */
+    /* RULES                                                                                                                   */
     /*                                                                                                                        */
     /*   For each var compute the weighted mean, ie mean(val*w1) as varWgt1 .. mean(val*w6) as varWgt6                        */
     /*                                                                                                                        */
@@ -132,7 +148,13 @@ How to use different weights on the same variable in a small fifty nine gb datas
     / __|/ _ \| | | | | __| |/ _ \| `_ \
     \__ \ (_) | | |_| | |_| | (_) | | | |
     |___/\___/|_|\__,_|\__|_|\___/|_| |_|
-
+               _
+     ___  __ _| |   ___  _ __   ___    ___ ___  _ __ ___
+    / __|/ _` | |  / _ \| `_ \ / _ \  / __/ _ \| `__/ _ \
+    \__ \ (_| | | | (_) | | | |  __/ | (_| (_) | | |  __/
+    |___/\__, |_|  \___/|_| |_|\___|  \___\___/|_|  \___|
+            |_|
+    */
     */
 
     proc sql;
@@ -205,6 +227,200 @@ How to use different weights on the same variable in a small fifty nine gb datas
     /*   20     T     0.90553    0.90564    0.90558    0.90557    0.90551    0.90567                                          */
     /*                                                                                                                        */
     /**************************************************************************************************************************/
+
+    /*___          _       _            _
+    |___ \      __| | __ _| |_ __ _ ___| |_ ___ _ __
+      __) |    / _` |/ _` | __/ _` / __| __/ _ \ `_ \
+     / __/ _  | (_| | (_| | || (_| \__ \ ||  __/ |_) |
+    |_____(_)  \__,_|\__,_|\__\__,_|___/\__\___| .__/
+                                               |_|
+    */
+
+    data want (keep=var varwgt:);
+      set sd1.have;
+      by var;
+      array vrw varwgt1-varwgt6;
+      array wgt w1-w6;
+      do over vrw;
+        vrw+val*wgt;
+      end;
+      if last.var then do;
+        denom=coalesce(dif(_n_),_n_);
+        do over vrw;
+          vrw=vrw/denom;
+        end;
+        output;
+        call missing(of varwgt1-varwgt6);
+      end;
+      format varwgt:  8.5;
+    run;
+
+    /*
+    NOTE: There were 987500000 observations read from the data set SD1.HAVE.
+    NOTE: The data set WORK.WANT has 20 observations and 7 variables.
+    NOTE: DATA statement used (Total process time):
+          real time           3:24.51
+    */
+
+
+    /*   _       _            _                       _     _
+      __| | __ _| |_ __ _ ___| |_ ___ _ __    ___  __| | __| | ___
+     / _` |/ _` | __/ _` / __| __/ _ \ `_ \  / __|/ _` |/ _` |/ _ \
+    | (_| | (_| | || (_| \__ \ ||  __/ |_) | \__ \ (_| | (_| |  __/
+     \__,_|\__,_|\__\__,_|___/\__\___| .__/  |___/\__,_|\__,_|\___|
+                                     |_|
+    */
+
+    * create spde partitioned data;
+
+    libname spde spde
+     ('c:\spde_c','d:\spde_d','f:\spde_f','g:\spde_g','m:\spde_m')
+        metapath =('d:\spde_d\metadata')
+        indexpath=(
+              'c:\spde_c'
+              ,'d:\spde_d'
+              ,'f:\spde_f'
+              ,'g:\spde_g'
+              ,'m:\spde_m')
+
+        datapath =(
+              'c:\spde_c'
+              ,'d:\spde_d'
+              ,'f:\spde_f'
+              ,'g:\spde_g'
+              ,'m:\spde_m')
+        partsize=500m ;
+    ;
+
+
+    data  spde.have (sortedby=var);
+      do var="A","B","C","D","E","F","G","H","I","J","K","L"
+             ,"M","N","O","P","Q","R","S","T";
+        do rep=1 to 1250*500*79;
+           val=1+uniform(1234)* (rank(var)-61)/20;
+           W1 = uniform(1234) * (rank(var)-61)/20;
+           W2 = uniform(1234) * (rank(var)-61)/20;
+           W3 = uniform(1234) * (rank(var)-61)/20;
+           W4 = uniform(1234) * (rank(var)-61)/20;
+           W5 = uniform(1234) * (rank(var)-61)/20;
+           W6 = uniform(1234) * (rank(var)-61)/20;
+           if mod(rep,10000000)=0 then put var= rep comma20.;
+           output;
+        end;
+      end;
+      stop;
+      drop rep;
+    run;quit;
+
+    * store macro in autocall library;
+
+    filename ft15f001 "c:/oto/datx.sas";
+    parmcards4;
+    %macro datx(var);
+
+    /* %let var=A; */
+
+    libname mwk "m:/wrk";
+
+    libname spde spde
+     ('c:\spde_c','d:\spde_d','f:\spde_f','g:\spde_g','m:\spde_m')
+        metapath =('d:\spde_d\metadata')
+        indexpath=(
+              'c:\spde_c'
+              ,'d:\spde_d'
+              ,'f:\spde_f'
+              ,'g:\spde_g'
+              ,'m:\spde_m')
+
+        datapath =(
+              'c:\spde_c'
+              ,'d:\spde_d'
+              ,'f:\spde_f'
+              ,'g:\spde_g'
+              ,'m:\spde_m')
+        partsize=500m access=readonly
+    ;
+       data mwk.&var (keep=var varwgt:);
+         set spde.have(where=(var="&var")) end=dne;
+         by var;
+         array vrw varwgt1-varwgt6;
+         array wgt w1-w6;
+         do over vrw;
+           vrw+val*wgt;
+         end;
+         if dne then do;
+           do over vrw;
+             vrw=vrw/_n_;
+           end;
+           output;
+         end;
+         format varwgt:  8.5;
+       run;
+
+    %mend datx;
+    ;;;;
+    run;quit;
+
+    %let _s=%sysfunc(compbl(C:\Progra~1\SASHome\SASFoundation\9.4\sas.exe -sysin c:\nul
+     -sasautos c:\oto -work d:\wrk -nosplash -rsasuser));
+
+    options noxwait noxsync;
+    %let tym=%sysfunc(time());
+    systask kill sys1 sys2 sys3 sys4  sys5 sys6 sys7 sys8 sys9 sys10
+                 sys11 sys12 sys13 sys14  sys15 sys16 sys17 sys18 sys19 sys20 ;
+    systask command "&_s -termstmt %nrstr(%datx(A);) -log d:\log\a1.log" taskname=sys1;
+    systask command "&_s -termstmt %nrstr(%datx(B);) -log d:\log\a2.log" taskname=sys2;
+    systask command "&_s -termstmt %nrstr(%datx(C);) -log d:\log\a3.log" taskname=sys3;
+    systask command "&_s -termstmt %nrstr(%datx(D);) -log d:\log\a4.log" taskname=sys4;
+    systask command "&_s -termstmt %nrstr(%datx(E);) -log d:\log\a5.log" taskname=sys5;
+    systask command "&_s -termstmt %nrstr(%datx(F);) -log d:\log\a6.log" taskname=sys6;
+    systask command "&_s -termstmt %nrstr(%datx(G);) -log d:\log\a7.log" taskname=sys7;
+    systask command "&_s -termstmt %nrstr(%datx(H);) -log d:\log\a8.log" taskname=sys8;
+    systask command "&_s -termstmt %nrstr(%datx(I);) -log d:\log\a9.log" taskname=sys9;
+    systask command "&_s -termstmt %nrstr(%datx(J);) -log d:\log\a10.log" taskname=sys10;
+    systask command "&_s -termstmt %nrstr(%datx(K);) -log d:\log\a11.log" taskname=sys11;
+    systask command "&_s -termstmt %nrstr(%datx(L);) -log d:\log\a12.log" taskname=sys12;
+    systask command "&_s -termstmt %nrstr(%datx(M);) -log d:\log\a13.log" taskname=sys13;
+    systask command "&_s -termstmt %nrstr(%datx(N);) -log d:\log\a14.log" taskname=sys14;
+    systask command "&_s -termstmt %nrstr(%datx(O);) -log d:\log\a15.log" taskname=sys15;
+    systask command "&_s -termstmt %nrstr(%datx(P);) -log d:\log\a16.log" taskname=sys16;
+    systask command "&_s -termstmt %nrstr(%datx(Q);) -log d:\log\a17.log" taskname=sys17;
+    systask command "&_s -termstmt %nrstr(%datx(R);) -log d:\log\a18.log" taskname=sys18;
+    systask command "&_s -termstmt %nrstr(%datx(S);) -log d:\log\a19.log" taskname=sys19;
+    systask command "&_s -termstmt %nrstr(%datx(T);) -log d:\log\a20.log" taskname=sys20;
+    waitfor sys1 sys2 sys3 sys4  sys5 sys6 sys7 sys8 sys9 sys10
+            sys11 sys12 sys13 sys14  sys15 sys16 sys17 sys18 sys19 sys20 ;
+    %let secs=%sysevalf(%sysfunc(time()) - &tym);
+    %put &=secs;
+    63 seconds
+
+
+    data want;
+
+      set
+         mwk.a
+         mwk.b
+         mwk.c
+         mwk.d
+         mwk.e
+         mwk.f
+         mwk.g
+         mwk.h
+         mwk.i
+         mwk.j
+         mwk.k
+         mwk.l
+         mwk.m
+         mwk.n
+         mwk.o
+         mwk.p
+         mwk.q
+         mwk.r
+         mwk.s
+         mwk.t ;
+    run;quit;
+
+
 
     /*              _
       ___ _ __   __| |
